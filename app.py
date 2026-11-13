@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import streamlit as st
 import plotly.express as px
-import plotly.graph_objects as go
 import pandas as pd
 
 from data_loader import load_gtfs
 from route_stats import build_route_stops, overview_table, routes_between
-from scoring import add_convenience_score, recommendation_text
+from scoring import add_convenience_score
+from timetable import get_route_trip_summary, get_trip_stop_times
 
 st.set_page_config(
     page_title="CommuteWise — Pune Transit",
@@ -28,13 +28,8 @@ h1,h2,h3 { font-family:'Space Grotesk',sans-serif !important; letter-spacing:-.0
 [data-testid="stSidebar"] { background:#172a25; }
 [data-testid="stSidebar"] * { color:#eef5e9 !important; }
 [data-testid="stSidebar"] [data-testid="stRadio"] label { padding:.45rem .3rem; }
-.hero {
-  background:linear-gradient(120deg,#172a25 0%,#25483b 100%);
-  border-radius:24px; padding:30px 34px; color:#f5f8f1; margin-bottom:22px;
-  position:relative; overflow:hidden;
-}
-.hero:after { content:""; position:absolute; width:260px; height:260px; right:-55px; top:-120px;
-  border:1px solid rgba(185,243,107,.35); border-radius:50%; box-shadow:0 0 0 28px rgba(185,243,107,.04),0 0 0 58px rgba(185,243,107,.04); }
+.hero { background:linear-gradient(120deg,#172a25 0%,#25483b 100%); border-radius:24px; padding:30px 34px; color:#f5f8f1; margin-bottom:22px; position:relative; overflow:hidden; }
+.hero:after { content:""; position:absolute; width:260px; height:260px; right:-55px; top:-120px; border:1px solid rgba(185,243,107,.35); border-radius:50%; box-shadow:0 0 0 28px rgba(185,243,107,.04),0 0 0 58px rgba(185,243,107,.04); }
 .hero h1 { color:#f5f8f1 !important; font-size:clamp(2.2rem,5vw,4rem); margin:8px 0 4px; }
 .hero p { color:#c5d4ca; max-width:640px; margin:0; font-size:1rem; }
 .eyebrow { color:#b9f36b; font-size:.72rem; font-weight:700; letter-spacing:.16em; text-transform:uppercase; }
@@ -56,12 +51,14 @@ footer { visibility:hidden; }
 </style>
 """, unsafe_allow_html=True)
 
+
 @st.cache_data(show_spinner="Loading Pune transit data…")
 def prepare_data():
     data = load_gtfs("data")
     route_stops = build_route_stops(data)
     overview = overview_table(data, route_stops)
     return data, route_stops, overview
+
 
 def metric_card(label, value, note=""):
     st.markdown(
@@ -70,18 +67,20 @@ def metric_card(label, value, note=""):
         unsafe_allow_html=True,
     )
 
+
 def style_chart(fig, height=340):
     fig.update_layout(
-        height=height, margin=dict(l=8,r=8,t=42,b=8),
+        height=height, margin=dict(l=8, r=8, t=42, b=8),
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(family="DM Sans", color="#43514a"),
         title_font=dict(family="Space Grotesk", size=18, color="#172a25"),
         xaxis=dict(showgrid=False, zeroline=False),
         yaxis=dict(showgrid=True, gridcolor="#e9eee7", zeroline=False),
-        colorway=["#6a9f45","#172a25","#d4a84f","#7da9a0"],
+        colorway=["#6a9f45", "#172a25", "#d4a84f", "#7da9a0"],
         legend=dict(orientation="h", y=1.12),
     )
     return fig
+
 
 def show_route_map(stops, title="Route shape"):
     if stops.empty:
@@ -97,21 +96,23 @@ def show_route_map(stops, title="Route shape"):
         hover_data={"stop_sequence": True, "stop_lat": False, "stop_lon": False},
         zoom=10, height=430,
     )
-    fig.update_traces(line_color="#5d8c3b", line_width=4, marker={"size":7, "color":"#172a25"})
-    fig.update_layout(
-        map_style="open-street-map", margin=dict(l=0,r=0,t=8,b=0),
-        paper_bgcolor="rgba(0,0,0,0)"
-    )
+    fig.update_traces(line_color="#5d8c3b", line_width=4, marker={"size": 7, "color": "#172a25"})
+    fig.update_layout(map_style="open-street-map", margin=dict(l=0, r=0, t=8, b=0), paper_bgcolor="rgba(0,0,0,0)")
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+
 
 # ---------- Sidebar ----------
 with st.sidebar:
     st.markdown("## 🚌 CommuteWise")
     st.caption("PUNE • PMPML TRANSIT INTELLIGENCE")
-    page = st.radio("WORKSPACE", ["Overview", "Plan a commute", "Route explorer", "About the score"], label_visibility="visible")
+    page = st.radio(
+        "WORKSPACE",
+        ["Overview", "Plan a commute", "Bus timetable", "Route explorer", "About the score"],
+        label_visibility="visible",
+    )
     st.divider()
     st.markdown("**DATA NOTE**")
-    st.caption("Built from open PMPML GTFS data. Trip counts are dataset counts, not live arrival predictions.")
+    st.caption("Built from PMPML GTFS data. Timetable entries are feed schedules/estimates, not live bus positions.")
     st.caption("Travel distances are estimated from stop coordinates.")
 
 try:
@@ -140,17 +141,16 @@ if page == "Overview":
         '<p>Compare bus routes with clarity. Find the option that balances fewer stops, shorter distance and more service.</p></div>',
         unsafe_allow_html=True,
     )
-    a,b,c,d = st.columns(4)
+    a, b, c, d = st.columns(4)
     with a: metric_card("Routes mapped", f"{total_routes:,}", "Unique PMPML routes")
     with b: metric_card("Stops indexed", f"{total_stops:,}", "Unique stop locations")
     with c: metric_card("Trips in feed", f"{total_trips:,}", "GTFS trip records")
     with d: metric_card("Avg. route stops", f"{avg_stops}", "Representative route patterns")
     st.write("")
-    left,right = st.columns([1.35,1])
+    left, right = st.columns([1.35, 1])
     with left:
         top = overview.nlargest(10, "n_stops").sort_values("n_stops")
-        fig = px.bar(top, x="n_stops", y="route_long_name", orientation="h",
-                     title="Routes with the widest stop coverage", text="n_stops")
+        fig = px.bar(top, x="n_stops", y="route_long_name", orientation="h", title="Routes with the widest stop coverage", text="n_stops")
         fig.update_traces(marker_color="#6a9f45", textposition="outside", cliponaxis=False)
         st.plotly_chart(style_chart(fig, 420), use_container_width=True)
     with right:
@@ -162,7 +162,7 @@ if page == "Overview":
         st.markdown('</div>', unsafe_allow_html=True)
         st.caption("Route length uses the longest available trip pattern for each route. It is an estimate, not a road-distance measurement.")
     st.markdown("### Explore the network")
-    st.write("Choose **Plan a commute** to compare routes between two stops, or open **Route explorer** to inspect a route's stop sequence and map.")
+    st.write("Choose **Plan a commute** to compare routes between two stops, **Bus timetable** to inspect scheduled trips, or **Route explorer** to inspect a route's stop sequence and map.")
 
 # ---------- Plan a commute ----------
 elif page == "Plan a commute":
@@ -173,7 +173,7 @@ elif page == "Plan a commute":
     default_from = next((x for x in stop_names if "swargate" in x.lower()), stop_names[0] if stop_names else "")
     default_to = next((x for x in stop_names if "katraj" in x.lower()), stop_names[-1] if stop_names else "")
     with st.form("journey_form"):
-        x,y = st.columns(2)
+        x, y = st.columns(2)
         origin = x.selectbox("FROM · Boarding stop", stop_names, index=stop_names.index(default_from) if default_from in stop_names else 0)
         destination = y.selectbox("TO · Destination stop", stop_names, index=stop_names.index(default_to) if default_to in stop_names else 0)
         submitted = st.form_submit_button("Find my routes →", use_container_width=True)
@@ -187,47 +187,106 @@ elif page == "Plan a commute":
             st.session_state["last_pair"] = (origin, destination)
     if "last_results" in st.session_state:
         scored = st.session_state["last_results"]
-        pair = st.session_state.get("last_pair", ("your origin","your destination"))
         st.divider()
         st.markdown(f"### {len(scored)} route option(s) found")
         best = scored.iloc[0]
         st.success(
-            f"Best overall: **{best['route_name']}** · {best['convenience_score']:.1f}/100. "
+            f"Best overall: **Bus {best['route_number']}** · {best['route_name']} · {best['convenience_score']:.1f}/100. "
             f"{int(best['stops_between'])} stops between {best['board_at']} and {best['get_off_at']}."
         )
-        k1,k2,k3 = st.columns(3)
-        with k1: metric_card("Best score", f"{best['convenience_score']:.1f}/100", str(best["route_name"]))
+        k1, k2, k3 = st.columns(3)
+        with k1: metric_card("Best score", f"{best['convenience_score']:.1f}/100", f"Bus {best['route_number']}")
         with k2: metric_card("Distance", f'{best["distance_km"]:.1f} km', "Estimated stop-to-stop distance")
         with k3: metric_card("Stops", f'{int(best["stops_between"])}', "Between selected stops")
         for _, row in scored.iterrows():
             st.markdown(
-                f'<div class="route-card"><div class="route-top"><div><b>{row["route_name"]}</b>'
+                f'<div class="route-card"><div class="route-top"><div><b>Bus {row["route_number"]}</b> · {row["route_name"]}'
                 f'<div class="small-muted">{row["board_at"]} → {row["get_off_at"]}</div></div>'
                 f'<div class="score-pill">{row["convenience_score"]:.1f} / 100</div></div>'
                 f'<hr><div class="small-muted">{int(row["stops_between"])} stops &nbsp;·&nbsp; '
                 f'{row["distance_km"]:.1f} km &nbsp;·&nbsp; {int(row["trips"])} trips in feed</div></div>',
                 unsafe_allow_html=True,
             )
-        chart = px.bar(scored.sort_values("convenience_score"), x="convenience_score", y="route_name",
-                       orientation="h", title="Convenience score comparison", text="convenience_score")
+        chart = px.bar(scored.sort_values("convenience_score"), x="convenience_score", y="route_number", orientation="h", title="Convenience score comparison", text="convenience_score")
         chart.update_traces(marker_color="#6a9f45", texttemplate="%{text:.1f}", textposition="outside")
         st.plotly_chart(style_chart(chart, max(300, 55*len(scored))), use_container_width=True)
-        st.caption("The convenience score is a project-defined comparison model, not an official PMPML rating. It does not include live traffic or real-time bus arrivals.")
+        st.caption("The convenience score is a project-defined comparison model, not an official PMPML rating. Timings are not live arrival predictions.")
+
+# ---------- Bus timetable ----------
+elif page == "Bus timetable":
+    st.markdown('<div class="eyebrow">SCHEDULE LOOKUP</div>', unsafe_allow_html=True)
+    st.title("Bus timetable")
+    st.write("Choose a PMPML route number, select its direction, and inspect the scheduled trips and stop-by-stop timings in the GTFS feed.")
+
+    route_options = data["routes"].drop_duplicates("route_id").copy()
+    route_options["route_short_name"] = route_options["route_short_name"].fillna("").astype(str)
+    route_options["route_long_name"] = route_options["route_long_name"].fillna("").astype(str)
+    route_options = route_options.sort_values(["route_short_name", "route_long_name"])
+    route_labels = {
+        f"Bus {row.route_short_name} — {row.route_long_name}": row.route_id
+        for row in route_options.itertuples()
+    }
+    if not route_labels:
+        st.warning("No PMPML route numbers were found in routes.txt.")
+    else:
+        selected_label = st.selectbox("PMPML bus route", list(route_labels.keys()), key="timetable_route")
+        selected_route_id = route_labels[selected_label]
+        route_trips = data["trips"].loc[data["trips"]["route_id"] == str(selected_route_id)]
+        direction_ids = sorted(route_trips["direction_id"].dropna().astype(str).unique().tolist())
+
+        if not direction_ids:
+            st.info("No trips are available for this route in the current GTFS feed.")
+        else:
+            direction_labels = {}
+            for direction_id in direction_ids:
+                headsigns = route_trips.loc[route_trips["direction_id"].astype(str) == direction_id, "trip_headsign"].dropna().astype(str)
+                headsigns = [name.strip() for name in headsigns.unique().tolist() if name.strip()]
+                direction_labels[f"Direction {direction_id}" + (f" · {headsigns[0]}" if headsigns else "")] = direction_id
+            direction_label = st.selectbox("Direction", list(direction_labels.keys()), key="timetable_direction")
+            selected_direction = direction_labels[direction_label]
+            summary = get_route_trip_summary(data, selected_route_id, selected_direction)
+
+            if summary.empty:
+                st.warning("No trip records with stop sequences were found for this route and direction.")
+            else:
+                if summary["first_departure_raw"].isna().all() and summary["last_arrival_raw"].isna().all():
+                    st.warning("This GTFS feed contains route and trip records, but no arrival_time/departure_time values. Stop timings cannot be displayed until those fields are supplied.")
+                st.markdown(f"### {len(summary)} scheduled trip(s) in this direction")
+                display_summary = summary[["Start time", "first_stop", "last_stop", "Destination time"]].copy()
+                display_summary.columns = ["First departure", "Starting stop", "Final stop", "Final arrival"]
+                st.dataframe(display_summary, use_container_width=True, hide_index=True, height=360)
+
+                trip_labels = {}
+                for row in summary.itertuples():
+                    trip_labels[row.trip_id] = f"{row[summary.columns.get_loc('Start time')]} · {row.first_stop} → {row.last_stop}"
+                chosen_trip = st.selectbox(
+                    "Inspect one trip's stop-by-stop timings",
+                    summary["trip_id"].tolist(),
+                    format_func=lambda trip_id: trip_labels.get(trip_id, str(trip_id)),
+                    key="timetable_trip",
+                )
+                stop_table = get_trip_stop_times(data, chosen_trip)
+                if stop_table.empty:
+                    st.info("No stop-level records were found for this trip.")
+                else:
+                    st.markdown("### Stop-by-stop timetable")
+                    st.dataframe(stop_table, use_container_width=True, hide_index=True, height=460)
+
+    st.caption("These are times recorded in the available GTFS feed. They are not live bus positions and may not match actual operating conditions. A route number identifies the service; a GTFS trip is one scheduled run of that service.")
 
 # ---------- Route explorer ----------
 elif page == "Route explorer":
     st.markdown('<div class="eyebrow">NETWORK EXPLORER</div>', unsafe_allow_html=True)
     st.title("Get to know a route.")
-    options = overview.sort_values("route_long_name")
-    labels = {f'{r.route_long_name} · {r.route_id}': r.route_id for r in options.itertuples()}
+    options = overview.sort_values(["route_short_name", "route_long_name"])
+    labels = {f'Bus {r.route_short_name} — {r.route_long_name}': r.route_id for r in options.itertuples()}
     selected = st.selectbox("Choose a route", list(labels.keys()))
     route_id = labels[selected]
-    row = overview.loc[overview["route_id"] == route_id].iloc[0]
     direction_rows = route_stops.loc[route_stops["route_id"] == route_id]
     directions = sorted(direction_rows["direction_id"].dropna().unique().tolist())
     direction = st.selectbox("Direction pattern", directions) if directions else None
     selected_stops = direction_rows.loc[direction_rows["direction_id"] == direction].sort_values("stop_sequence") if direction is not None else pd.DataFrame()
-    m1,m2,m3 = st.columns(3)
+    m1, m2, m3 = st.columns(3)
     with m1: metric_card("Stops", f'{len(selected_stops):,}', "Selected direction pattern")
     with m2: metric_card("Route length", f'{selected_stops["cum_km"].max():.1f} km' if not selected_stops.empty else "—", "Coordinate-based estimate")
     with m3: metric_card("Trips", f'{int(data["trips"].loc[data["trips"]["route_id"] == route_id].shape[0]):,}', "Across available directions")
@@ -235,8 +294,8 @@ elif page == "Route explorer":
     show_route_map(selected_stops)
     st.markdown("### Stop sequence")
     if not selected_stops.empty:
-        table = selected_stops[["stop_sequence","stop_name","cum_km"]].copy()
-        table.columns = ["Sequence","Stop","Distance from start (km)"]
+        table = selected_stops[["stop_sequence", "stop_name", "cum_km"]].copy()
+        table.columns = ["Sequence", "Stop", "Distance from start (km)"]
         table["Distance from start (km)"] = table["Distance from start (km)"].round(2)
         st.dataframe(table, use_container_width=True, hide_index=True, height=420)
     else:
@@ -248,12 +307,11 @@ else:
     st.title("How the score works.")
     st.write("CommuteWise uses a simple weighted model to compare routes found between the same two stops.")
     components = pd.DataFrame({
-        "Signal":["Fewer stops","Shorter distance","More trips"],
-        "Weight":[40,30,30],
-        "Why it matters":["Fewer intermediate stops can mean a simpler ride.","A shorter route distance can reduce time on the road.","More trips in the feed can indicate more service opportunities."]
+        "Signal": ["Fewer stops", "Shorter distance", "More trips"],
+        "Weight": [40, 30, 30],
+        "Why it matters": ["Fewer intermediate stops can mean a simpler ride.", "A shorter route distance can reduce time on the road.", "More trips in the feed can indicate more service opportunities."],
     })
-    fig = px.bar(components, x="Weight", y="Signal", orientation="h", text="Weight",
-                 title="Convenience score weights (%)")
+    fig = px.bar(components, x="Weight", y="Signal", orientation="h", text="Weight", title="Convenience score weights (%)")
     fig.update_traces(marker_color="#6a9f45", texttemplate="%{text}%", textposition="outside")
     st.plotly_chart(style_chart(fig, 280), use_container_width=True)
     st.dataframe(components, use_container_width=True, hide_index=True)
