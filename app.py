@@ -238,8 +238,14 @@ elif page == "Bus timetable":
             st.info("No trips are available for this route in the current GTFS feed.")
         else:
             direction_labels = {}
+            # trip_headsign is optional in GTFS. Do not index it directly:
+            # some valid feeds omit the column entirely.
+            headsign_column = route_trips.get(
+                "trip_headsign", pd.Series("", index=route_trips.index, dtype="string")
+            )
             for direction_id in direction_ids:
-                headsigns = route_trips.loc[route_trips["direction_id"].astype(str) == direction_id, "trip_headsign"].dropna().astype(str)
+                direction_mask = route_trips["direction_id"].astype(str) == direction_id
+                headsigns = headsign_column.loc[direction_mask].dropna().astype(str)
                 headsigns = [name.strip() for name in headsigns.unique().tolist() if name.strip()]
                 direction_labels[f"Direction {direction_id}" + (f" · {headsigns[0]}" if headsigns else "")] = direction_id
             direction_label = st.selectbox("Direction", list(direction_labels.keys()), key="timetable_direction")
