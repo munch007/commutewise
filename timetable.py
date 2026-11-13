@@ -51,7 +51,11 @@ def get_route_trip_summary(data, route_id, direction_id):
     for trip_id, group in stop_times.groupby("trip_id", sort=False):
         first = group.iloc[0]
         last = group.iloc[-1]
-        headsign = trips.loc[trips["trip_id"] == trip_id, "trip_headsign"]
+        # trip_headsign is optional in GTFS and may be absent from the table.
+        if "trip_headsign" in trips.columns:
+            headsign = trips.loc[trips["trip_id"] == trip_id, "trip_headsign"]
+        else:
+            headsign = pd.Series(dtype="string")
         rows.append({
             "trip_id": trip_id,
             "direction": headsign.iloc[0] if not headsign.empty and str(headsign.iloc[0]).strip() else f"Direction {direction_id}",
